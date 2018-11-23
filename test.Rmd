@@ -1,0 +1,108 @@
+---
+title: "recommenderlab"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Vi
+```{r}
+library(recommenderlab)
+library(data.table)
+data <- fread("data.csv")
+```
+
+Gör till matrix.
+```{r}
+df_train_ori <- dcast(data, CustomerID ~ StockCode,
+                      value.var = 'Quantity', fun.aggregate = sum, fill = 0)
+
+CustomerId <- df_train_ori[,1]
+
+
+df_train_ori <- df_train_ori[, -c(1,3504:3508)]
+
+for (i in names(df_train_ori))
+ df_train_ori[is.na(get(i)), (i):=0]
+```
+
+Skapa en uppslagstabell
+```{r}
+setkeyv(data, c('StockCode', 'Description'))
+itemCode <- unique(data[, c('StockCode')])
+setkeyv(data, NULL)
+
+kampanjvaror <- sample(itemCode$StockCode, 50)
+```
+
+Vi gör om data till en matris.
+```{r}
+df_train <- as.matrix(df_train_ori)
+df_train <- df_train[rowSums(df_train) > 5, colSums(df_train) > 5] 
+df_train <- binarize(as(df_train, "realRatingMatrix"), minRatin = 1)
+```
+
+
+Dela upp i tränings och testdata
+```{r}
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(df_train),replace = TRUE, prob = c(0.8, 0.2))
+y <- df_train[!which_train]
+x <- df_train[which_train]
+```
+
+```{r}
+recommender_models <- recommenderRegistry$get_entries(dataType ="binaryRatingMatrix")
+recommender_models$IBCF_binaryRatingMatrix$parameters
+```
+
+
+```{r}
+#n_recommended <- 5
+#n_training <- 1000
+recc_model <- Recommender(data = x, method = "IBCF", parameter = list(method = 'Jaccard'))
+model_details <- getModel(recc_model)
+```
+
+Predict
+
+```{r}
+recc_predicted <- predict(object = recc_model, newdata = y, n = 4065, type = "topNList")
+```
+
+```{r}
+as(recc_predicted, "list")[1:5]
+```
+
+
+
+```{r}
+user_1 <- CustomerId[as.integer(names(recc_predicted@items[5]))]
+CustomerId[CustomerID == 12365]
+```
+
+
+```{r}
+vvv <- recc_predicted@items[[2]]
+vvv <- rownames(model_details$sim)[vvv]
+products <- itemCode[vvv]
+```
+
+```{r}
+library(purrr)
+library(tibble)
+library(tidyr)
+df_predicted <- map_df(recc_predicted, ~data_frame(
+  items = map_df(.x, .x@items)
+))
+recc_predicted@items[[]]
+
+vvv <- recc_predicted %>%
+  map_df(., ~data_frame(
+    items = map(.@items, as.numeric)))
+  
+vvv$
+```
+
+

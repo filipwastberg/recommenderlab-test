@@ -1,0 +1,110 @@
+---
+title: "En enkel rekommendationsmotor för matvaror"
+description: |
+  En beskrivning av en enkel rekommendationsmotor i R.
+author:
+  - name: Filip Wästberg
+    affiliation: Ferrologic
+date: "`r Sys.Date()`"
+output: radix::radix_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+För att bygga rekommendationsmotorn använder vi oss av paketen `recommenderlab` och `data.table`. Vi börjar med att ladda data som innehåller kvitton från en näthandel.
+
+```{r message=FALSE, warning=FALSE}
+library(recommenderlab)
+library(data.table)
+library(dplyr)
+data <- fread("data.csv")
+```
+
+Hur många kvitton är det här?
+
+```{r}
+as_tibble(data) %>%
+  distinct(InvoiceNo) %>%
+  count()
+```
+
+Det är drygt 26 000 kvitton. 
+
+Vi använder data.table för att göra om data till en `user-unit-matrix`. 
+
+```{r}
+df_train_ori <- dcast(data, CustomerID ~ StockCode,
+                      value.var = 'Quantity', fun.aggregate = sum, fill = 0)
+```
+
+Gör alla NA till 0.
+
+```{r}
+for (i in names(df_train_ori))
+ df_train_ori[is.na(get(i)), (i):=0]
+```
+
+Skapa en uppslagstabell och ta fram kampanjvaror. 
+
+```{r}
+setkeyv(data, c('StockCode', 'Description'))
+itemCode <- unique(data[, c('StockCode', 'Description')])
+setkeyv(data, NULL)
+
+kampanjvaror <- sample(itemCode$StockCode, 50)
+```
+
+Vi gör om data till en matris.
+
+```{r}
+df_train <- as.matrix(df_train_ori)
+df_train <- df_train[rowSums(df_train) > 5, colSums(df_train) > 5] 
+df_train <- binarize(as(df_train, "realRatingMatrix"), minRatin = 1)
+```
+
+Dela upp i tränings och testdata
+
+```{r}
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(df_train),replace = TRUE, prob = c(0.8, 0.2))
+y <- df_train[!which_train]
+x <- df_train[which_train]
+```
+
+Träningsparametrar
+IBCF-modellen ett antal träningsparametrar. `k` är antalet produkter som algoritmen använder för att räkna ut associationer i data i det första steget. Sedan identifierar den, för varje föremål, de `k` mest lika produkterna. Det är en similarity function som per default är `Cosine` men den kan även vara `pearson`(korrelation). Vi börjar med default parameterarna där `method = "Jaccard"` och `k = 30`.
+
+Nedan ser vi parametrarna.
+
+```{r}
+recommender_models <- recommenderRegistry$get_entries(dataType = "binaryRatingMatrix")
+recommender_models$IBCF_binaryRatingMatrix$parameters
+```
+
+Vi kan nu träna modellen
+
+```{r}
+recc_model <- Recommender(data = x, method = "IBCF", parameter = list(method = 'Jaccard'))
+model_details <- getModel(recc_model)
+```
+
+Vi har ett gäng utvalda varor som vi ska skicka till kunderna. På grund av det sättet vi `n = 4070` så att vi sedan kan filtrera varorna. 
+
+```{r}
+recc_predicted <-predict(object = recc_model, newdata = y, n = 4065, type = "topNList")
+```
+
+Vi kan därefter ta fram en data frame för en kund och dess rekommenderade varor. Sedan kan vi filtrera bort alla varor som det inte är kampanj på.
+
+```{r}
+vvv <- recc_predicted@items[[7]]
+vvv <- rownames(model_details$sim)[vvv]
+products <- itemCode[vvv]
+rec_products <- products[products$StockCode %in% kampanjvaror]
+rec_products %>%
+  filter(Description != "")
+```
+
+
+
